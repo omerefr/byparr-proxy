@@ -163,6 +163,7 @@ For each site, create a Cardigann YAML in Prowlarr's `/config/Definitions/Custom
 - Change `id:` to something unique (`yts-byparr`)
 - Change `name:` to something distinguishable (`YTS (via Byparr)`)
 - Replace the `links:` block with a single entry: `- http://byparr-proxy:8888/yts/`
+- **Strip the leading slash from row-level URL fields** (`download:`, `details:`). A field that extracts an `href` like `/torrent/123/...` resolves against the *host root* (`http://byparr-proxy:8888/torrent/123/...`), silently dropping the prefix. Add a `re_replace` filter with args `["^/", ""]` so the value becomes `torrent/123/...` and resolves under the prefix. (Built-in definitions all use leading-slash hrefs — this is why they need the tweak in multi mode.)
 
 Restart Prowlarr, then add the new indexer through the UI.
 

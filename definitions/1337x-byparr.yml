@@ -224,10 +224,18 @@ search:
     details:
       selector: td[class^="coll-1"] a[href^="/torrent/"]
       attribute: href
+      # strip the leading slash so the URL resolves against the
+      # byparr-proxy base (http://...:8888/1337x/) instead of the host root
+      filters:
+        - name: re_replace
+          args: ["^/", ""]
     download:
       # .torrent link is on the details page
       selector: td[class^="coll-1"] a[href^="/torrent/"]
       attribute: href
+      filters:
+        - name: re_replace
+          args: ["^/", ""]
     # dates come in three flavours:
     date_year:
       # (within this year) 7am Sep. 14th
