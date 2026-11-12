@@ -163,7 +163,17 @@ For each site, create a Cardigann YAML in Prowlarr's `/config/Definitions/Custom
 - Change `id:` to something unique (`yts-byparr`)
 - Change `name:` to something distinguishable (`YTS (via Byparr)`)
 - Replace the `links:` block with a single entry: `- http://byparr-proxy:8888/yts/`
-- **Strip the leading slash from row-level URL fields** (`download:`, `details:`). A field that extracts an `href` like `/torrent/123/...` resolves against the *host root* (`http://byparr-proxy:8888/torrent/123/...`), silently dropping the prefix. Add a `re_replace` filter with args `["^/", ""]` so the value becomes `torrent/123/...` and resolves under the prefix. (Built-in definitions all use leading-slash hrefs — this is why they need the tweak in multi mode.)
+- **Make row-level URL fields absolute.** `download:`/`details:` fields that extract an `href` like `/torrent/123/...` are resolved by Cardigann against the *search page URL* (not the indexer base), so relative values produce garbage URLs (`.../sort-search/<q>/time/desc/1/torrent/123/...`) and grabs fail with `Download selectors didn't match`. Fix per field: strip the leading slash **and** prepend the proxy base, so the value is an absolute URL Cardigann never re-resolves:
+
+  ```yaml
+  filters:
+    - name: re_replace
+      args: ["^/", ""]
+    - name: prepend
+      args: "http://byparr-proxy:8888/<prefix>/"
+  ```
+
+  **Gotcha: `prepend` takes its `args` as a plain string, not a list.** A list (`args: ["http://…"]`) makes the filter throw on every row; Prowlarr swallows per-field exceptions (TRACE-level logging), the release's `Guid` stays null, and `CleanupReleases` dedupes by `Guid` — collapsing your entire result set to **one row**, with an empty `<link>` and nothing in the logs. Symptom to recognize: a search page full of rows, but Prowlarr returns exactly 1 release. (Built-in definitions all use leading-slash hrefs — this is why they need the tweak in multi mode.)
 
 Restart Prowlarr, then add the new indexer through the UI.
 

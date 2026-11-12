@@ -193,7 +193,7 @@ search:
         - name: re_replace
           args: ["~([\\w]+(?:[\\[\\]\\(\\)\\w]+)?)$", "-$1"]
         - name: replace
-          args: ["", ""] # get rid of unwanted character #6582
+          args: ["\x0F", ""] # get rid of unwanted character #6582
         # cleanup for Sonarr
         - name: re_replace # EP 3 4 to E3-4
           args: ["(?i)\\sEP\\s(\\d{1,2})\\s(E?\\s?\\d{1,2})\\s", " E$1-$2 "]
@@ -224,11 +224,14 @@ search:
     details:
       selector: td[class^="coll-1"] a[href^="/torrent/"]
       attribute: href
-      # strip the leading slash so the URL resolves against the
-      # byparr-proxy base (http://...:8888/1337x/) instead of the host root
+      # Cardigann resolves row-level URLs against the *search page* URL,
+      # so the value must be absolute: strip the leading slash and prepend
+      # the proxy base. `prepend` takes args as a plain string, not a list.
       filters:
         - name: re_replace
           args: ["^/", ""]
+        - name: prepend
+          args: "http://byparr-proxy:8888/1337x/"
     download:
       # .torrent link is on the details page
       selector: td[class^="coll-1"] a[href^="/torrent/"]
@@ -236,6 +239,8 @@ search:
       filters:
         - name: re_replace
           args: ["^/", ""]
+        - name: prepend
+          args: "http://byparr-proxy:8888/1337x/"
     # dates come in three flavours:
     date_year:
       # (within this year) 7am Sep. 14th
