@@ -1,6 +1,6 @@
 # byparr-proxy
 
-A 70-line HTTP passthrough that gets **1337x and other Cloudflare-protected indexers working again with Prowlarr/Jackett in 2026**, when FlareSolverr and Byparr alone are no longer enough.
+A single-file, zero-dependency HTTP passthrough that gets **1337x, EZTV, KickAss and other Cloudflare-protected indexers working again with Prowlarr/Jackett in 2026**, when FlareSolverr and Byparr alone are no longer enough. Run one instance per site, or one instance fronting many sites behind URL prefixes.
 
 If you've been seeing this in Prowlarr's logs even with FlareSolverr or Byparr configured:
 
@@ -50,7 +50,7 @@ Stop the replay from ever happening. Put a tiny HTTP server between Prowlarr and
 
 Prowlarr's 1337x indexer is reconfigured to use `http://byparr-proxy:8888/` as its **Base URL**. Prowlarr never talks to Cloudflare directly. The Cloudflare detection in Prowlarr's `CloudFlareDetectionService` never fires, because Prowlarr only ever sees clean `200 OK` responses with real HTML in the body. There is no cookie replay because there is no second request to replay.
 
-That's it. ~70 lines of Python, no extra dependencies, reuses the Byparr you already have running.
+That's it. One Python file, no dependencies, reuses the Byparr you already have running.
 
 ## Quick start
 
@@ -64,7 +64,7 @@ Prerequisites:
 From the directory that already contains your stack's compose file, clone this repo:
 
 ```bash
-git clone https://github.com/guyg2232/byparr-proxy.git
+git clone https://github.com/martin-van-coden/byparr-proxy.git
 ```
 
 Append this service to the `services:` block in your existing compose file. No other changes needed if `byparr` is already in the same compose project/network — the proxy will reach it by service name.
@@ -77,7 +77,8 @@ Append this service to the `services:` block in your existing compose file. No o
     ports:
       - "8888:8888"
     environment:
-      UPSTREAM: https://1337x.to
+      # Multi mode: one container, one URL prefix per indexer
+      UPSTREAMS: "1337x=https://1337x.to,eztv=https://eztvx.to"
       BYPARR: http://byparr:8191/v1
       TIMEOUT_MS: "120000"
       PORT: "8888"
@@ -91,7 +92,9 @@ Then start just the new service:
 docker compose up -d byparr-proxy
 ```
 
-Smoke-test from your browser on the Docker host: visit `http://localhost:8888/cat/Movies/1/`. After 30s–2min (Byparr solving Cloudflare for the first time — can be slow under load), you should see the actual 1337x Movies page render, unstyled, because we 404 static assets to keep things fast. If Docker is running on another machine, use that machine's LAN IP instead of `localhost`.
+Smoke-test from your browser on the Docker host: visit `http://localhost:8888/` — you'll see an index page listing every configured prefix — then `http://localhost:8888/1337x/cat/Movies/1/`. After 30s–2min (Byparr solving Cloudflare for the first time — can be slow under load), you should see the actual 1337x Movies page render, unstyled, because we 404 static assets to keep things fast. If Docker is running on another machine, use that machine's LAN IP instead of `localhost`.
+
+Only need one site? Set `UPSTREAM: https://1337x.to` instead of `UPSTREAMS` — the legacy single-upstream mode serves that site at `/` with no prefix routing. `UPSTREAMS` takes precedence if both are set.
 
 If you want to run this repo standalone instead, `cd byparr-proxy && docker compose up -d` starts both `byparr` and `byparr-proxy` using the included compose file.
 
@@ -128,7 +131,7 @@ docker restart prowlarr
 1. Open Prowlarr UI.
 2. **Indexers → + Add Indexer**.
 3. Search for **"1337x (via Byparr)"** in the list and click it.
-4. Base URL is automatically `http://byparr-proxy:8888/` (the only entry in the YAML).
+4. Base URL is automatically `http://byparr-proxy:8888/1337x/` (the only entry in the YAML).
 5. **Do not add a FlareSolverr tag.** That's the whole point — we don't want Prowlarr's indexer-proxy mechanism kicking in.
 6. Click **Test**. First test typically takes 30s–2min while Byparr solves (sometimes longer if the server is under load). Should green-check.
 7. **Save**.
@@ -145,100 +148,109 @@ Each uncached search through this proxy takes 30 seconds to 2 minutes (Byparr is
 
 In practice you do **not** need to change anything in Radarr or Sonarr — they just wait. The user-facing symptom of a too-slow solve is a single failed RSS sync or manual search that retries on its own next cycle. If you see *consistent* timeouts (multiple failures in a row, indexer marked unhealthy), the real fix is reducing concurrent load on Byparr — not raising timeouts further. Lower Radarr/Sonarr's interactive search concurrency, or stagger RSS sync intervals.
 
-## Adding more indexers
+## Adding more indexers (multi mode)
 
-The proxy is single-upstream per instance — one container handles one site. To add a second indexer (e.g. YTS):
-
-**1. Add another `byparr-proxy-yts` service to your compose:**
+The recommended way to run multiple indexers is **multi mode**: one container, one port, one URL prefix per site. To add a site (e.g. YTS), append it to `UPSTREAMS` and restart the container — no new services, no new ports:
 
 ```yaml
-  byparr-proxy-yts:
-    build: .
-    container_name: byparr-proxy-yts
-    restart: unless-stopped
-    ports:
-      - "8889:8889"
     environment:
-      UPSTREAM: https://yts.mx
-      BYPARR: http://byparr:8191/v1
-      TIMEOUT_MS: "60000"
-      PORT: "8889"
-    depends_on:
-      - byparr
+      UPSTREAMS: "1337x=https://1337x.to,eztv=https://eztvx.to,yts=https://yts.mx"
 ```
 
-**2. Create a Cardigann YAML in Prowlarr's `/config/Definitions/Custom/` directory** based on the existing `yts.yml` from the [Prowlarr indexers repo](https://github.com/Prowlarr/Indexers), with two changes:
-   - Change `id:` to something unique (`yts-byparr`)
-   - Change `name:` to something distinguishable (`YTS (via Byparr)`)
-   - Replace the `links:` block with a single entry: `- http://byparr-proxy-yts:8889/`
+Each site is then reachable at `http://byparr-proxy:8888/<prefix>/...`, and `/` serves an index page listing every prefix.
 
-**3. Restart Prowlarr, add the new indexer through the UI.**
+For each site, create a Cardigann YAML in Prowlarr's `/config/Definitions/Custom/` directory based on the site's built-in definition from the [Prowlarr indexers repo](https://github.com/Prowlarr/Indexers), with three changes:
+- Change `id:` to something unique (`yts-byparr`)
+- Change `name:` to something distinguishable (`YTS (via Byparr)`)
+- Replace the `links:` block with a single entry: `- http://byparr-proxy:8888/yts/`
+- **Make row-level URL fields absolute.** `download:`/`details:` fields that extract an `href` like `/torrent/123/...` are resolved by Cardigann against the *search page URL* (not the indexer base), so relative values produce garbage URLs (`.../sort-search/<q>/time/desc/1/torrent/123/...`) and grabs fail with `Download selectors didn't match`. Fix per field: strip the leading slash **and** prepend the proxy base, so the value is an absolute URL Cardigann never re-resolves:
+
+  ```yaml
+  filters:
+    - name: re_replace
+      args: ["^/", ""]
+    - name: prepend
+      args: "http://byparr-proxy:8888/<prefix>/"
+  ```
+
+  **Gotcha: `prepend` takes its `args` as a plain string, not a list.** A list (`args: ["http://…"]`) makes the filter throw on every row; Prowlarr swallows per-field exceptions (TRACE-level logging), the release's `Guid` stays null, and `CleanupReleases` dedupes by `Guid` — collapsing your entire result set to **one row**, with an empty `<link>` and nothing in the logs. Symptom to recognize: a search page full of rows, but Prowlarr returns exactly 1 release. (Built-in definitions all use leading-slash hrefs — this is why they need the tweak in multi mode.)
+
+Restart Prowlarr, then add the new indexer through the UI.
+
+The original single-upstream mode is still supported for existing setups: run a separate service or container with `UPSTREAM: https://yts.mx` and its own `PORT`, and point the definition at that container. New setups should prefer multi mode — one container to watch instead of N.
 
 ## Configuration reference
 
 The proxy reads these environment variables:
 
-| Variable          | Default                      | Description                                              |
-| ----------------- | ---------------------------- | -------------------------------------------------------- |
-| `UPSTREAM`        | `https://1337x.to`           | Base URL of the indexer the proxy should fetch from.     |
-| `BYPARR`          | `http://byparr:8191/v1`      | Byparr's `/v1` endpoint, reachable from the container.   |
-| `TIMEOUT_MS`      | `120000`                     | Per-request timeout passed to Byparr (milliseconds). Bump higher if solves regularly exceed 2 minutes. |
-| `PORT`            | `8888`                       | Local port the proxy listens on.                         |
-| `LOG_LEVEL`       | `INFO`                       | Python logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`. Set to `DEBUG` to see Byparr's solved URL and byte counts per request. |
-| `CACHE_TTL_S`     | `3600`                       | TTL (seconds) for caching successful responses. Cache is in-memory only; restart clears it. Set to `0` to disable. |
-| `STUB_CAT_PATHS`  | `true`                       | When on, `/cat/...` paths (used by indexer health-tests in Prowlarr/Sonarr/Radarr/Lidarr/Readarr) skip Byparr entirely and return a synthetic results page. Set to `false` to route them through Byparr like everything else. |
+| Variable                  | Default                 | Description                                              |
+| ------------------------- | ----------------------- | -------------------------------------------------------- |
+| `UPSTREAMS`               | —                       | **Multi mode.** Comma-separated `prefix=base-url` pairs, e.g. `1337x=https://1337x.to,eztv=https://eztvx.to`. Requests are routed by their first path segment. Takes precedence over `UPSTREAM`. |
+| `UPSTREAM`                | —                       | **Single (legacy) mode.** Base URL of the one indexer the proxy fronts, served at `/` with no prefix routing. Used only when `UPSTREAMS` is not set. One of the two is required. |
+| `BYPARR`                  | `http://byparr:8191/v1` | Byparr's `/v1` endpoint, reachable from the container.   |
+| `TIMEOUT_MS`              | `120000`                | Per-request timeout passed to Byparr (milliseconds). Bump higher if solves regularly exceed 2 minutes. |
+| `PORT`                    | `8888`                  | Local port the proxy listens on.                         |
+| `LOG_LEVEL`               | `INFO`                  | Python logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+| `CACHE_TTL_S`             | `3600`                  | TTL (seconds) for caching successful responses. Cache is in-memory only; restart clears it. |
+| `STUB_CAT_PATHS[_<prefix>]` | `true`              | When on, `/cat/...` paths (used by indexer health-tests in Prowlarr/Sonarr/Radarr/Lidarr/Readarr) skip Byparr entirely and return a synthetic results page. In multi mode `STUB_CAT_PATHS_<prefix>` controls a single prefix. Set to `false` to route them through Byparr like everything else. |
+| `MAGNET_PATHS[_<prefix>]` | `[?&]d=(?:&|$)`         | Regex of (prefix-stripped) paths whose fetched page is reduced to its bare `magnet:` URI, which the *arr apps accept as a download link directly. See [why](#why-the-cache-the-stub-and-the-magnet-conversion). |
 
-### Why the cache and the stub
+### Why the cache, the stub, and the magnet conversion
 
 Without these, the proxy was unusable under real *arr-stack load:
 
 - **Caching with in-flight dedup.** Sonarr, Radarr, and Prowlarr each poll the same indexer endpoints on independent schedules. Without dedup, three near-simultaneous health checks all triggered three concurrent Byparr solves, exhausting its per-request timeout window and producing `408 Request Timeout`. The cache (1h default) absorbs the *spaced-out* duplicates; in-flight coalescing absorbs *concurrent* ones. Empty result pages (no `/torrent/` links) are deliberately **not** cached, so a transient blank doesn't get pinned for an hour. Calls to Byparr itself are serialized — Byparr drives a real browser, so it effectively serializes anyway, but doing it explicitly in the proxy avoids the timeout-stacking problem.
 - **`/cat/...` stub.** Cloudflare's protection on 1337x's category browse pages is observably harder than on keyword search — when Byparr can't solve the category pages it returns 408 even though `https://1337x.to/search/<keyword>/1/` works fine. Since `/cat/...` is hit *only* by indexer health-checks (real searches go to `/search/...` or `/sort-search/...`), short-circuiting `/cat/...` to a synthetic response with one fake row per major category family keeps every *arr app's test green without touching real search traffic. The stub rows have 0 seeders and sentinel titles like `byparr-proxy stub - TV/HD healthy`, so they're harmless if they ever surface in a Prowlarr browse view.
+- **Magnet path conversion.** Byparr's `/v1` API takes no request headers, so a layout cookie that would reveal magnet links on listing pages can't be sent. Some indexers keep the magnet off the listing rows anyway — EZTV hides it behind a "show links" form, and the KickAss mirror keeps it on the torrent details page. For those, the Cardigann `download:` field points at the page that carries the magnet, and `MAGNET_PATHS[_<prefix>]` tells the proxy which paths to reduce to the bare `magnet:` URI. The *arr apps accept a raw magnet URI as a download link, so no second fetch is needed. The default pattern `[?&]d=(?:&|$)` matches EZTV-style episode links (`...?d=`); e.g. `MAGNET_PATHS_kickass="^/.+\.html$"` matches KickAss details pages.
 
 ### Reading the logs
 
 Every request gets a 6-character request ID so concurrent requests stay legible. The startup banner shows which features are active:
 
 ```
-2026-05-23 19:49:17.863 INFO  byparr-proxy starting
-2026-05-23 19:49:17.866 INFO    upstream:   https://1337x.to
+2026-05-23 19:49:17.863 INFO  byparr-proxy starting (multi mode)
+2026-05-23 19:49:17.866 INFO    upstreams:  1337x/ -> https://1337x.to, eztv/ -> https://eztvx.to
+2026-05-23 19:49:17.866 INFO    /1337x/      stub /cat/: on | magnet paths: [?&]d=(?:&|$)
+2026-05-23 19:49:17.866 INFO    /eztv/       stub /cat/: on | magnet paths: [?&]d=(?:&|$)
 2026-05-23 19:49:17.872 INFO    byparr:     http://byparr:8191/v1
 2026-05-23 19:49:17.872 INFO    timeout:    120000 ms
 2026-05-23 19:49:17.872 INFO    port:       8888
 2026-05-23 19:49:17.872 INFO    log level:  INFO
 2026-05-23 19:49:17.872 INFO    cache ttl:  3600 s
-2026-05-23 19:49:17.872 INFO    stub /cat/: on
 ```
 
 Per-request log lines:
 
 ```
 # Fresh fetch via Byparr, cached on success
-... INFO  [a1b2c3] GET /search/shrek2001/1/ from 172.18.0.7 -> forwarding to byparr (https://1337x.to/search/shrek2001/1/)
-... INFO  [a1b2c3] GET /search/shrek2001/1/ -> cached for 3600s (status 200, 26188 bytes)
-... INFO  [a1b2c3] GET /search/shrek2001/1/ <- 200 in 23.11s (byparr 23.09s, 26188 bytes)
+... INFO  [a1b2c3] GET /1337x/search/shrek2001/1/ from 172.18.0.7 -> forwarding to byparr (https://1337x.to/search/shrek2001/1/)
+... INFO  [a1b2c3] GET /1337x/search/shrek2001/1/ -> cached for 3600s (status 200, 26188 bytes)
+... INFO  [a1b2c3] GET /1337x/search/shrek2001/1/ <- 200 in 23.11s (byparr 23.09s, 26188 bytes)
 
 # Same path again within the TTL -- served from cache, no byparr roundtrip
-... INFO  [b2c3d4] GET /search/shrek2001/1/ from 172.18.0.7 -> cache hit (age 142s, ttl 3600s)
-... INFO  [b2c3d4] GET /search/shrek2001/1/ <- 200 in 0.01s (cache hit, 26188 bytes)
+... INFO  [b2c3d4] GET /1337x/search/shrek2001/1/ from 172.18.0.7 -> cache hit (age 142s, ttl 3600s)
+... INFO  [b2c3d4] GET /1337x/search/shrek2001/1/ <- 200 in 0.01s (cache hit, 26188 bytes)
 
 # Two clients hit the same path concurrently -- second one waits on the first
-... INFO  [c3d4e5] GET /search/foo/1/ from 172.18.0.7 -> forwarding to byparr (https://1337x.to/search/foo/1/)
-... INFO  [d4e5f6] GET /search/foo/1/ from 172.18.0.8 -> coalescing with in-flight request
-... INFO  [c3d4e5] GET /search/foo/1/ <- 200 in 25.13s (byparr 25.11s, 18204 bytes)
-... INFO  [d4e5f6] GET /search/foo/1/ <- 200 in 25.13s (coalesced with in-flight, 18204 bytes)
+... INFO  [c3d4e5] GET /1337x/search/foo/1/ from 172.18.0.7 -> forwarding to byparr (https://1337x.to/search/foo/1/)
+... INFO  [d4e5f6] GET /1337x/search/foo/1/ from 172.18.0.8 -> coalescing with in-flight request
+... INFO  [c3d4e5] GET /1337x/search/foo/1/ <- 200 in 25.13s (byparr 25.11s, 18204 bytes)
+... INFO  [d4e5f6] GET /1337x/search/foo/1/ <- 200 in 25.13s (coalesced with in-flight, 18204 bytes)
 
 # /cat/... paths short-circuited by the stub
-... INFO  [e5f6a7] GET /cat/TV/1/ from 172.18.0.10 -> 200 stubbed (cat path, bypassing byparr)
+... INFO  [e5f6a7] GET /1337x/cat/TV/1/ from 172.18.0.10 -> 200 stubbed (cat path, bypassing byparr)
 
-# Successful fetch but no /torrent/ links in the body -- not cached, so the next attempt retries
-... INFO  [f6a7b8] GET /search/somequery/1/ -> not cached (empty results, 870 bytes)
+# Successful fetch but no torrent rows in the body -- not cached, so the next attempt retries
+... INFO  [f6a7b8] GET /1337x/search/somequery/1/ -> not cached (empty results, 870 bytes)
 
 # Static asset we never bother forwarding
-... INFO  [a7b8c9] GET /css/style.css from 172.18.0.7 -> 404 skipped (static asset)
+... INFO  [a7b8c9] GET /1337x/css/style.css from 172.18.0.7 -> 404 skipped (static asset)
+
+# Unknown prefix in multi mode
+... INFO  [c9d0e1] GET /nosuchsite/ from 172.18.0.7 -> 404 unknown prefix
 
 # Hard failure
-... ERROR [b8c9d0] GET /cat/Movies/2/ <- byparr request failed after 60.52s: HTTP Error 408: Request Timeout
+... ERROR [b8c9d0] GET /1337x/cat/Movies/2/ <- byparr request failed after 60.52s: HTTP Error 408: Request Timeout
 ```
 
 What to look for when something's wrong:
@@ -251,7 +263,7 @@ What to look for when something's wrong:
 ## Limitations
 
 - **GET and HEAD only.** Indexer search/listing is GET; the proxy does not currently forward POST bodies. Most Cardigann definitions use GET, so this is rarely an issue.
-- **The actual `.torrent` file or magnet link** is not fetched via the proxy. The Cardigann YAML's `download:` section gets a magnet URI or an `itorrents.org` URL, both of which Prowlarr fetches directly and which are not Cloudflare-protected.
+- **The actual `.torrent` file is usually not fetched via the proxy.** The Cardigann YAML's `download:` section gets a magnet URI or an `itorrents.org` URL, both of which Prowlarr fetches directly and which are not Cloudflare-protected. (Exception: when `MAGNET_PATHS` matches, the proxy returns the bare magnet URI itself — see [why](#why-the-cache-the-stub-and-the-magnet-conversion).)
 - **The proxy returns Byparr's HTML body verbatim.** It does not rewrite internal links. The Cardigann definition only cares about path-based selectors, so this works fine — but don't try to use the proxy as a general-purpose browser front-end.
 - **First request to a domain is slow** — typically 30s to 2 minutes while Byparr solves, occasionally longer. Subsequent requests within the cf_clearance lifetime are usually faster, but Byparr's session reuse is best-effort.
 - **Static assets (.css/.js/.png/.svg/etc.) get an instant 404** from the proxy by design. Prowlarr never requests them; this just keeps browser smoke-tests from triggering pointless Cloudflare solves.
@@ -296,6 +308,7 @@ The Cardigann YAML's selectors didn't match anything. The site may have changed 
 
 ## Acknowledgements
 
+- [guyg2232/byparr-proxy](https://github.com/guyg2232/byparr-proxy) — the original project this fork extends with multi-upstream routing, per-prefix configuration, and magnet path conversion.
 - [Byparr](https://github.com/ThePhaseless/Byparr) — does the actual Cloudflare-solving with a real browser. This project is just a wrapper.
 - [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) — the project Byparr forked from. The [issue #1672 discussion](https://github.com/FlareSolverr/FlareSolverr/issues/1672) was where the root-cause analysis started.
 - [Prowlarr](https://github.com/Prowlarr/Prowlarr) and the [Prowlarr Indexers repo](https://github.com/Prowlarr/Indexers) — the Cardigann definition for 1337x is adapted from there.

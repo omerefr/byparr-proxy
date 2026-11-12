@@ -26,7 +26,8 @@ services:
     depends_on:
       - byparr
 
-# To proxy a second indexer, copy the byparr-proxy block, give it a unique
-# container_name (e.g. byparr-proxy-yts), a unique host port (e.g. 8889),
-# and change UPSTREAM. Then add a matching Cardigann definition pointing
-# at the new container.
+# To proxy more indexers, prefer multi mode: replace UPSTREAM with
+#   UPSTREAMS: "1337x=https://1337x.to,yts=https://yts.mx"
+# and point each Cardigann definition at http://byparr-proxy:8888/<prefix>/.
+# The legacy alternative is a second byparr-proxy block with a unique
+# container_name, host port, and UPSTREAM.
