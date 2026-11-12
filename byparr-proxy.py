@@ -353,11 +353,13 @@ class Handler(BaseHTTPRequestHandler):
         # when Cloudflare served a challenge page instead of the real
         # content, or on transient upstream errors. None of these should
         # be pinned for an hour. A bare magnet body is stable for the
-        # lifetime of the entry, and KAT-style mirrors mark their rows
-        # with cellMainLink instead of /torrent/ links.
+        # lifetime of the entry, KAT-style mirrors mark their rows with
+        # cellMainLink instead of /torrent/ links, and EZTV rows are /ep/
+        # episode links (its no-results page carries no /ep/ strings).
         has_results = (b"/torrent/" in body
                        or body.startswith(b"magnet:")
-                       or b"cellMainLink" in body)
+                       or b"cellMainLink" in body
+                       or b"/ep/" in body)
         with _state_lock:
             _inflight.pop(key, None)
             if 200 <= status < 300 and has_results:
